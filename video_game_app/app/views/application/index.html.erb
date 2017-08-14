@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+
+    <!--
+         HTML Head
+    -->
+    <head>
+        <meta charset="utf-8" />
+        <meta name="description" content="Ruby Sample Single Page Application" />
+        <meta name="keywords" content="games,arcade,ruby" />
+        <meta name="robots" content="noindex" />
+        <meta name="author" content="Robert Bisewski" />
+        <%= csrf_meta_tag %>
+
+        <!--
+             Bootstrap Styles
+        -->
+        <link rel="stylesheet prefetch"
+              href="https://cdnjs.cloudflare.com/ajax/libs/bootswatch/3.3.7/cerulean/bootstrap.min.css">
+
+        <!--
+             Vue.JS
+        -->
+        <!--<script src="https://vuejs.org/js/vue.js"></script>-->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/2.4.2/vue.min.js"></script>
+
+        <!--
+             Lodash
+        -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.4/lodash.min.js"></script>
+
+        <!--
+             JQuery
+        -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.2.1/jquery.min.js"></script>
+
+        <!-- Main styles -->
+        <link rel="stylesheet" href="styles.css">
+    </head>
+
+    <!--
+         HTML Body
+    -->
+    <body>
+        <input id="ip_address" 
+               name="ip_address"
+               type="hidden" 
+               value="<%= request.remote_ip %>">
+
+        <!--
+            VueJS Container
+        -->
+        <div id="demo" class="container">
+
+            <!-- Page Title -->
+            <h1>Arcade Videogames Catalog</h1>
+
+            <!-- Main Table  -->
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th class="one_third" v-for="column in columns">
+                            <a href="#"
+                               v-on:click="sortBy(column.toLowerCase())"
+                               v-bind:class="{active: sortKey == column.toLowerCase() }">
+                                {{ column }}
+                                <span v-show="sortKey == column.toLowerCase()">
+                                    <span v-show="sort_direction == 'asc'">(ascending)</span>
+                                    <span v-show="sort_direction == 'desc'">(descending)</span>
+                                </span>
+                            </a>
+                        </th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <tr v-for="game in ordered_shown_games">
+                        <td><a href="#" v-on:click="open_info_popup(game)">{{ game.name }}</a></td>
+                        <td>{{ game.year }}</td>
+                        <td>{{ game.manufacturer }}</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <!-- Prev / Next buttons -->
+            <br>
+            <a v-show="page_num > 0"
+               class="prev_button"
+               href="#" v-on:click="prev_ten()">
+                &larr; Previous
+            </a>
+            <a v-show="next_button_is_enabled"
+               class="next_button"
+               href="#" v-on:click="next_ten()">
+                Next &rarr;
+            </a>
+
+            <!-- Game Details Modal -->
+            <modal v-if="show_modal" @close="show_modal = false">
+                <h3 slot="header">Game Details
+                    <button class="modal_x_button"
+                       v-on:click="show_modal = false">[ X ]</button>
+                </h3>
+                <table class="modal-table" slot="body">
+                    <tr>
+                        <td>Name:</td>
+                        <td> {{ v.detailsHTML.name }} </td>
+                    </tr>
+                    <tr>
+                        <td>Year:</td>
+                        <td> {{ v.detailsHTML.year }} </td>
+                    </tr>
+                    <tr>
+                        <td>Manufacturer:</td>
+                        <td> {{ v.detailsHTML.manufacturer }} </td>
+                    </tr>
+                    <tr>
+                        <td>Notes:</td>
+                        <td> {{ v.detailsHTML.notes }} </td>
+                    </tr>
+                    <tr v-if="v.detailsHTML.image">
+                        <td>Pic:</td>
+                        <td>
+                          <img v-bind:src="'game_images/' + v.detailsHTML.image"
+                               alt="Image of the arcade game."
+                               height="256px"
+                               width="256px" />
+                        </td>
+                    </tr>
+                </table>
+                <div slot="footer">
+                    <span class="modal_like_footer">
+                        {{ v.show_modal_game_likes }} people like this.
+                    </span>
+                    <button v-if="show_modal_like" class="modal_like_button"
+                            v-on:click="like_videogame(v.detailsHTML)">
+                      [ Like ]
+                    </button>
+                </div>
+            </modal>
+        </div>
+
+        <!--
+             VueJS Modal Template
+        -->
+        <script type="text/x-template" id="modal-template">
+            <transition name="modal">
+              <div class="modal-mask">
+                <div class="modal-wrapper">
+                  <div class="modal-container">
+
+                    <div class="modal-header">
+                      <slot name="header">
+                        default header
+                      </slot>
+                    </div>
+
+                    <div class="modal-body">
+                      <slot name="body">
+                        default body
+                      </slot>
+                    </div>
+
+                    <div class="modal-footer">
+                      <slot name="footer">
+                        default footer
+                      </slot>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </transition>
+        </script>
+
+        <!--
+             Scripts
+        -->
+        <script>
+
+        //
+        // Register the custom modal component
+        //
+        Vue.component('modal', {
+            template: "#modal-template"
+        })
+
+        //
+        // Initialize the main VueJS object
+        //
+        var v = new Vue({
+          el: '#demo',
+          data: {
+            sortKey: 'year',
+            sort_direction: 'asc',
+            columns: ['Name', 'Year', 'Manufacturer'],
+            tmp_array: [],
+            games: [],
+            shown_games: [],
+            page_num: 0,
+            max_number_of_pages: 0,
+            next_button_is_enabled: true,
+            detailsHTML: "",
+            show_modal: false,
+            show_modal_like: true,
+            show_modal_game_likes: 0,
+            client_ip: "0.0.0.0",
+          },
+
+          //
+          // COMPUTED
+          //
+          computed: {
+              ordered_shown_games: function() {
+
+                  // clear away any data present in the tmp_array and the
+                  // currently rendered shown games
+                  this.tmp_array.length   = 0;
+                  this.shown_games.length = 0;
+
+                  // sort and dump the results to the tmp array
+                  this.tmp_array = _.orderBy(this.games, this.sortKey, this.sort_direction);
+
+                  // cycle thru the total list of games
+                  for (i = this.page_num * 10; i < this.tmp_array.length; i++) {
+
+                      //
+                      // Break if the number of games current being
+                      // shown is 10 or more
+                      //
+                      if (this.shown_games.length >= 10) {
+                          break;
+                      }
+
+                      //
+                      // Append active games to be displayed
+                      //
+                      this.shown_games.push(this.tmp_array[i]);
+                  }
+
+                  // return the ordered set of shown games
+                  return this.shown_games
+              }
+          },
+
+          //
+          // METHODS
+          //
+          methods: {
+
+              //! Function to sort columns, triggers upon user click
+              /*
+               * @param     string    key
+               *
+               * @return    none
+               */
+              sortBy: function(sortKey) {
+
+                //
+                // If ascending then...
+                //
+                if ((this.sortKey == sortKey)
+                  && (this.sort_direction == 'asc')) {
+
+                    // Set it to 'descending' sort
+                    this.sort_direction = 'desc';
+
+                //
+                // Else if descending then...
+                //
+                } else if ((this.sortKey == sortKey)
+                  && (this.sort_direction == 'desc')) {
+
+                    // Set it to 'ascending' sort
+                    this.sort_direction = 'asc';
+                }
+
+                // select this as the new sort key
+                this.sortKey = sortKey;
+              },
+
+              //! View the 10 previous games in the list
+              /*
+               * @return    none
+               */
+              prev_ten: function() {
+                  if (v.page_num != 0) {
+
+                      // decrement the page number
+                      v.page_num--;
+
+                      // clear the current shown games array
+                      v.shown_games.length = 0;
+
+                      // cycle thru the total list of games
+                      for (i = v.page_num * 10; i < v.games.length; i++) {
+
+                          //
+                          // Break if the number of games current being
+                          // shown is 10 or more
+                          //
+                          if (v.shown_games.length >= 10) {
+                              break;
+                          }
+
+                          //
+                          // Append active games to be displayed
+                          //
+                          v.shown_games.push(v.games[i]);
+                      }
+                  }
+
+                  // enable the next button since this is not yet the end
+                  v.next_button_is_enabled = true;
+              },
+
+              //! View the next 10 games in the list
+              /*
+               * @return    none
+               */
+              next_ten: function() {
+
+                  // If the max number of pages has not let been exceeded...
+                  if (max_number_of_pages > v.page_num) {
+
+                      // increment the current page count by one
+                      v.page_num++;
+
+                      // clear the current shown games array
+                      v.shown_games.length = 0;
+
+                      // cycle thru the total list of games
+                      for (i = v.page_num * 10; i < v.games.length; i++) {
+
+                          //
+                          // Break if the number of games current being
+                          // shown is 10 or more
+                          //
+                          if (v.shown_games.length >= 10) {
+                              break;
+                          }
+
+                          //
+                          // Append active games to be displayed
+                          //
+                          v.shown_games.push(v.games[i]);
+                      }
+
+                      // assume there are still more entries
+                      v.next_button_is_enabled = true;
+                  }
+
+
+                  //
+                  // if the user has *now* reached the end, go ahead and
+                  // disable the "Next" button
+                  //
+                  if (max_number_of_pages-1 <= v.page_num) {
+                      v.next_button_is_enabled = false;
+                  }
+              },
+
+              //! View additional game details via pop-up
+              /*
+               * @param     object    pointer to the Game object
+               *
+               * @return    none
+               */
+              open_info_popup: function(element) {
+
+                  // go ahead and make the modal visible
+                  v.detailsHTML = element;
+                  v.show_modal = true;
+                  v.show_modal_like = true;
+                  v.show_modal_game_likes = 0;
+
+                  // conduct a GET to 'like' RESTful page
+                  $.get('/likes.json', function(result) {
+
+                      // safety check, ensure there is at least one like
+                      if (!result.length) {
+                          return;
+                      }
+
+                      //
+                      // Cycle thru the results
+                      //
+                      for (i = 0; i < result.length; i++) {
+
+                          // if the game_id matches the currently selected
+                          // game, go ahead and increment the like counter
+                          if (result[i].game_id == element.id) {
+                              v.show_modal_game_likes++;
+                          }
+
+                          //
+                          // show the like button for this game if the user at this
+                          // IP address has already liked this game
+                          //
+                          if ((result[i].game_id == element.id)
+                            && ((result[i].ip == "'" + v.client_ip + "'")
+                            || (result[i].ip == v.client_ip))) {
+                              v.show_modal_like = false;
+                          }
+                      }
+                  })
+              },
+
+              //! Handle what happens when the end user presses [Like]
+              /*
+               * @param     object    pointer to the Game
+               *
+               * @return    none
+               */
+              like_videogame: function(element) {
+
+                  // increment the number of likes
+                  v.show_modal_game_likes++;
+
+                  // hide the like button since this game was now liked
+                  v.show_modal_like = false;
+
+                  // determine the current datetime
+                  var as_of_now = new Date();
+
+                  //
+                  // assemble the data as JSON
+                  //
+                  var post_data = "";
+                  post_data += "game_id=" + element.id + "&";
+                  post_data += "datetime='" + as_of_now.getTime() + "'&";
+                  post_data += "ip='" + v.client_ip + "'&";
+                  post_data += "name='" + element.name + "'&";
+                  post_data += "year=" + element.year + "&";
+                  post_data += "manufacturer='" + element.manufacturer + "'&";
+                  post_data += "likes=" + v.show_modal_game_likes + "";
+
+                  // conduct a POST to the 'like' RESTful page
+                  $.ajax({
+                      type: 'post',
+                      beforeSend: function(xhr) {
+                          xhr.setRequestHeader('X-CSRF-Token',
+                            $('meta[name="csrf-token"]').attr('content'))
+                      },
+                      data: post_data,
+                      complete: function(request){},
+                      url: '/likes#create'
+                  });
+              }
+          }
+        });
+
+        //
+        // PROGRAM MAIN
+        //
+
+        // Ensure the ruby server was actually able to determine the ip
+        // of the client that is currently in this session.
+        if ($('#ip_address').length && $('#ip_address').val().length) {
+ 
+            // Record the visitor's IP Address
+            v.client_ip = $('#ip_address').val();
+        }
+
+        // Obtain arcade video game data via GET call to the JSON results
+        $.get('/games.json', function(result) {
+
+              //
+              // Convert page GET call to JSON array.
+              //
+              v.tmp_array = result;
+
+              //
+              // Show only games that are currently active
+              //
+              for (i = 0; i < v.tmp_array.length; i++) {
+
+                  //
+                  // ignore any games that are inactive
+                  //
+                  if ((v.tmp_array[i].is_active == 1)
+                    || (v.tmp_array[i].is_active == 'Y')
+                    || (v.tmp_array[i].is_active == 'Yes')
+                    || (v.tmp_array[i].is_active == 'yes')) {
+
+                      //
+                      // add active games to be displayed
+                      //
+                      v.games.push(v.tmp_array[i]);
+                  }
+              }
+
+              // Clear away the contents of the tmp_array
+              v.tmp_array.length = 0;
+
+              //
+              // Calculate the max number of pages
+              //
+              max_number_of_pages = v.games.length / 10;
+
+              //
+              // Show only the first 10 games
+              //
+              for (i = 0; i < v.games.length; i++) {
+
+                  //
+                  // Break if the number of games current being
+                  // shown is 10 or more
+                  //
+                  if (v.shown_games.length >= 10) {
+                      break;
+                  }
+
+                  //
+                  // Append active games to be displayed
+                  //
+                  v.shown_games.push(v.games[i]);
+              }
+         })
+        </script>
+    </body>
+</html>

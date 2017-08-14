@@ -1,0 +1,187 @@
+#!/usr/bin/env ruby
+#
+# Filename: import_csv_to_sqlite3.rb
+# 
+# Description: Simple script to take a CSV file and convert it to a SQLite3
+#              database in memory or to a given file.
+#
+
+require 'csv'
+require 'rubygems'
+require 'sequel'
+require 'tempfile'
+require 'trollop'
+require 'sqlite3'
+
+
+#
+# Handle program options
+#
+OPTIONS = Trollop::options do
+  banner <<-EOS
+Usage:
+   import_csv_to_sqlite3 [options] file.csv [...]
+
+where [options] are:
+EOS
+  opt :sqlite_console, "Run 'sqlite3 output.db' afterwards"
+  opt :output, "Save generated db to the following file", :type => :string
+end
+
+
+#
+# Function to connect to a given SQLite3 database file
+#
+def getDatabase(filename)
+  puts "Connecting to sqlite://#{filename}"
+  db = Sequel.sqlite(filename)
+  return db
+end
+
+
+#
+# Use a given filename to populate a table from the given file
+#
+def populateTableFromCSV(db, filename)
+  options = { :headers           => true,
+              :header_converters => :symbol,
+              :converters        => :all }
+  data = CSV.table(filename, options)
+  headers = data.headers
+  tablename = File.basename(filename, '.csv').gsub(/[^0-9a-zA-Z]/,'_').to_sym
+  likes_tablename = "likes".to_sym
+
+  #
+  # Assemble the video games table
+  #
+  puts "Dropping the following table: #{tablename}"
+  DB.drop_table? tablename
+  puts "Creating the following table: #{tablename}"
+  DB.create_table tablename do
+    column 'id', Integer, primary_key: true, null: false
+    column 'image', String
+    data.by_col!.each do |columnName,rows|
+      columnType = getCommonClass(rows) || String
+      column columnName, columnType
+    end
+  end
+
+  #
+  # Import the data for the video games table
+  #
+  count = 0
+  puts "Inserting CSV data into the following table: #{tablename}"
+  data.by_row!.each do |row|
+
+    # hashify the contents of a given row
+    row_contents = row.to_hash
+
+    # add an id to each row
+    row_contents[:id] = count
+
+    # variable to store game image location, as well as lower, upper,
+    # and underscore names
+    image_name      = ""
+    name_underscore = row_contents[:name].to_s
+    name_lower      = ""
+    name_upper      = ""
+
+    # convert the game name to underscore
+    name_underscore = name_underscore.gsub(/ /, '_')
+
+    # upper case the underscore name
+    name_upper = name_underscore
+    name_upper = name_upper.upcase
+
+    # lower case the underscore name
+    name_lower = name_underscore
+    name_lower = name_lower.downcase
+
+    # check if a game image exists in 'data/game_images/%gamename.jpg'
+    if File.exist? File.expand_path "data/game_images/#{name_lower}.jpg"
+
+        # if it does, assign it to the image_name variable
+        image_name = "#{name_lower}.jpg"
+    end
+
+    # check if a game image exists in 'data/game_images/%GAMENAME.jpg'
+    if File.exist? File.expand_path "data/game_images/#{name_upper}.jpg"
+
+        # if it does, assign it to the image_name variable
+        image_name = "#{name_upper}.jpg"
+    end
+
+    # store the image into the row contents
+    row_contents[:image] = image_name
+
+    # insert the row contents
+    db[tablename].insert(row_contents)
+
+    # increment the count
+    count = count + 1
+  end
+  puts "CSV was successfully imported into: #{tablename}"
+
+  #
+  # Assemble the video game likes table
+  #
+  puts "Dropping the following table: #{likes_tablename}"
+  DB.drop_table? likes_tablename
+  puts "Creating the following table: #{likes_tablename}"
+  DB.create_table likes_tablename do
+    column 'id', Integer, primary_key: true, null: false
+    column 'game_id', Integer
+    column 'datetime', String
+    column 'ip', String
+  end
+  puts "The following table was successfully created: #{likes_tablename}"
+end
+
+
+#
+# Obtain the class of each element in the row
+#
+def getCommonClass(rows)
+  return rows.inject(rows[0].class) { |klass, el| break if klass != el.class ; klass }
+end
+
+
+#
+# Functions to launch the sqlite3 console
+#
+def sqlite3()
+  launchSqliteConsole()
+end
+def launchSqliteConsole()
+  File.exists?(DB_PATH) or Trollop.die "Unable to launch sqlite3; invalid file: #{DB_PATH}"
+  puts "Launching 'sqlite3 #{DB_PATH}'. Table schema:\n"
+  system("sqlite3 #{DB_PATH} '.schema'")
+  puts ""
+  system("sqlite3 #{DB_PATH}")
+  exit
+end
+
+
+#
+# PROGRAM MAIN
+#
+
+# Evaluate any options given to the program
+if OPTIONS[:output]
+  DB_PATH = OPTIONS[:output]
+else
+  DB_TMP = Tempfile.new(['import_csv_to_sqlite3', '.sqlite3'])
+  DB_PATH = DB_TMP.path
+end
+
+DB = getDatabase(DB_PATH)
+
+Trollop.die "Missing CSV file arguments" unless ARGV.count > 0
+until ARGV.empty? do
+  file = ARGV.shift
+  File.exists?(file) or Trollop.die "Invalid file: #{file}"
+  puts "Parsing file #{file}"
+  populateTableFromCSV(DB, file)
+end
+
+launchSqliteConsole() if OPTIONS[:sqlite_console]
